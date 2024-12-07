@@ -1,4 +1,6 @@
 import logging
+import os
+from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ApplicationBuilder,
@@ -10,6 +12,9 @@ from telegram.ext import (
     ContextTypes
 )
 
+# Загружаем переменные окружения из .env файла
+load_dotenv()
+
 # Включаем логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -19,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Определяем состояния разговора
-CHOOSING, TYPING_CONTACT = range(2)
+CHOOSING, TYPING_CONTACT, SELECTING_ROOMS, SELECTING_DISTRICT = range(4)
 
 # Определяем кнопки выбора
 keyboard = [
@@ -34,6 +39,39 @@ keyboard = [
 ]
 reply_markup = InlineKeyboardMarkup(keyboard)
 
+# Определяем кнопки для выбора количества комнат
+rooms_keyboard = [
+    [
+        InlineKeyboardButton("1 комната", callback_data='1_room'),
+        InlineKeyboardButton("2 комнаты", callback_data='2_rooms')
+    ],
+    [
+        InlineKeyboardButton("3 комнаты", callback_data='3_rooms'),
+        InlineKeyboardButton("4 комнаты", callback_data='4_rooms')
+    ],
+    [
+        InlineKeyboardButton("Больше 4 комнат", callback_data='more_rooms')
+    ]
+]
+rooms_markup = InlineKeyboardMarkup(rooms_keyboard)
+
+# Определяем кнопки для выбора района
+districts = [
+    "Киевский",
+    "Суворовский",
+    "Комсомольский",
+    "Ленинский",
+    "Шевченковский",
+    "Фрунзенский",
+    "Партизанский",
+    "Героев Сталинграда",
+    "Александровский",
+    "Центральный"
+]
+
+districts_keyboard = [[InlineKeyboardButton(district, callback_data=district.lower())] for district in districts]
+districts_markup = InlineKeyboardMarkup(districts_keyboard)
+
 # Обработчик команды /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отправляет приветственное сообщение с инлайн-кнопками выбора."""
@@ -44,7 +82,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return CHOOSING
 
-# Обработчик нажатий на инлайн-кнопки
+# Обработчик нажатий на инлайн-кнопки выбора недвижимости
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает нажатия на инлайн-кнопки и запрашивает контактные данные."""
     query = update.callback_query
@@ -62,21 +100,74 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Обработчик получения контактных данных
 async def received_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает полученные контактные данные и завершает разговор."""
+    """Обрабатывает полученные контактные данные и запрашивает количество комнат."""
     user_contact = update.message.text
+    context.user_data['contact'] = user_contact  # Сохраняем контакт
+
+    await update.message.reply_text(
+        "Спасибо! Сколько комнат вам нужно?",
+        reply_markup=rooms_markup
+    )
+    return SELECTING_ROOMS
+
+# Обработчик выбора количества комнат
+async def selecting_rooms(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор количества комнат и запрашивает район."""
+    query = update.callback_query
+    await query.answer()
+
+    rooms_choice = query.data
+    context.user_data['rooms'] = rooms_choice  # Сохраняем выбор количества комнат
+
+    await query.edit_message_text(text="Выберите район в городе Днепр:")
+    return SELECTING_DISTRICT
+
+# Обработчик выбора района
+async def selecting_district(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор района и завершает разговор."""
+    query = update.callback_query
+    await query.answer()
+
+    district_choice = query.data
+    context.user_data['district'] = district_choice  # Сохраняем выбор района
+
+    # Здесь вы можете добавить логику обработки данных, например, сохранение в базу или отправку администратору
+
     choice = context.user_data.get('choice')
+    rooms = context.user_data.get('rooms')
+    district = context.user_data.get('district')
+    contact = context.user_data.get('contact')
 
-    # Здесь вы можете добавить логику обработки данных, например, сохранение в базу
-
-    response_messages = {
-        'rent_apartment': "Спасибо! Мы свяжемся с вами по поводу аренды квартиры.",
-        'buy_apartment': "Спасибо! Мы свяжемся с вами по поводу покупки квартиры.",
-        'rent_house': "Спасибо! Мы свяжемся с вами по поводу аренды дома.",
-        'buy_house': "Спасибо! Мы свяжемся с вами по поводу покупки дома."
+    # Формируем сообщение для подтверждения
+    choice_mapping = {
+        'rent_apartment': "Аренда квартиры",
+        'buy_apartment': "Покупка квартиры",
+        'rent_house': "Аренда дома",
+        'buy_house': "Покупка дома"
     }
 
-    response = response_messages.get(choice, "Спасибо за информацию! Мы свяжемся с вами в ближайшее время.")
-    await update.message.reply_text(response)
+    rooms_mapping = {
+        '1_room': "1 комната",
+        '2_rooms': "2 комнаты",
+        '3_rooms': "3 комнаты",
+        '4_rooms': "4 комнаты",
+        'more_rooms': "Больше 4 комнат"
+    }
+
+    district_mapping = {
+        district.lower(): district for district in districts
+    }
+
+    response = (
+        f"**Ваш запрос:**\n"
+        f"Тип: {choice_mapping.get(choice, 'Неизвестно')}\n"
+        f"Количество комнат: {rooms_mapping.get(rooms, 'Неизвестно')}\n"
+        f"Район: {district_mapping.get(district, 'Неизвестно')}\n"
+        f"Контакт: {contact}\n\n"
+        f"Спасибо! Мы свяжемся с вами в ближайшее время."
+    )
+
+    await query.edit_message_text(text=response, parse_mode='Markdown')
 
     return ConversationHandler.END
 
@@ -100,8 +191,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(help_text)
 
 def main():
-    # Вставьте сюда ваш токен
-    TOKEN = '7635795563:AAEqNHfskDhKv5dHQssdI66KT3hm7cuJnuU'
+    # Получаем токен из переменных окружения для безопасности
+    TOKEN = os.getenv('7635795563:AAEqNHfskDhKv5dHQssdI66KT3hm7cuJnuU')
+
+    if not TOKEN:
+        logger.error("Токен бота не найден. Установите переменную окружения TELEGRAM_BOT_TOKEN.")
+        return
 
     # Создаём приложение
     application = ApplicationBuilder().token(TOKEN).build()
@@ -112,6 +207,8 @@ def main():
         states={
             CHOOSING: [CallbackQueryHandler(button_callback)],
             TYPING_CONTACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_contact)],
+            SELECTING_ROOMS: [CallbackQueryHandler(selecting_rooms)],
+            SELECTING_DISTRICT: [CallbackQueryHandler(selecting_district)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
